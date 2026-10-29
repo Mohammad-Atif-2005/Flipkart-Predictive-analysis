@@ -552,4 +552,196 @@ plt.ylabel("Actual")
 plt.tight_layout()
 plt.show()
 
-print("\n========== PREDICTIVE ANALYSIS COMPLETED ==========")
+
+# ==========================================================
+# 20. CONFUSION MATRICES FOR ALL FIVE MODELS
+# ==========================================================
+
+fig, axes = plt.subplots(2, 3, figsize=(16, 10))
+axes = axes.flatten()
+
+for i, (name, pred) in enumerate(predictions.items()):
+
+    cm = confusion_matrix(y_test, pred, labels=[0, 1])
+
+    print("\n==========", name.upper(), "CONFUSION MATRIX ==========")
+    print(cm)
+
+    sns.heatmap(
+        cm,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        xticklabels=["Delivered", "Returned"],
+        yticklabels=["Delivered", "Returned"],
+        linewidths=0.5,
+        ax=axes[i]
+    )
+
+    axes[i].set_title(name)
+    axes[i].set_xlabel("Predicted Status")
+    axes[i].set_ylabel("Actual Status")
+
+axes[5].axis("off")
+
+plt.suptitle("Confusion Matrices of Five Models", fontsize=16)
+plt.tight_layout()
+plt.show()
+
+
+# ==========================================================
+# 21. ACCURACY COMPARISON
+# ==========================================================
+
+plt.figure(figsize=(10, 6))
+
+accuracy_data = results_df.sort_values(
+    "Accuracy (%)", ascending=False
+)
+
+ax = sns.barplot(
+    data=accuracy_data,
+    x="Model",
+    y="Accuracy (%)"
+)
+
+plt.title("Accuracy Comparison of Five Models")
+plt.xlabel("Machine Learning Model")
+plt.ylabel("Accuracy (%)")
+plt.ylim(0, 100)
+plt.xticks(rotation=25, ha="right")
+
+for container in ax.containers:
+    ax.bar_label(container, fmt="%.2f", padding=3)
+
+plt.tight_layout()
+plt.show()
+
+
+# ==========================================================
+# 22. PRECISION, RECALL AND F1-SCORE COMPARISON
+# ==========================================================
+
+metric_columns = [
+    "Precision (%)",
+    "Recall (%)",
+    "F1 Score (%)"
+]
+
+results_df.set_index("Model")[metric_columns].plot(
+    kind="bar",
+    figsize=(12, 6),
+    ylim=(0, 100)
+)
+
+plt.title("Precision, Recall and F1-Score Comparison")
+plt.xlabel("Machine Learning Model")
+plt.ylabel("Score (%)")
+plt.xticks(rotation=25, ha="right")
+plt.legend(title="Evaluation Metric")
+plt.tight_layout()
+plt.show()
+
+
+# ==========================================================
+# 23. ACTUAL VS PREDICTED ORDER DISTRIBUTION
+# ==========================================================
+
+distribution_data = {
+    "Actual": [
+        int((y_test == 0).sum()),
+        int((y_test == 1).sum())
+    ]
+}
+
+for name, pred in predictions.items():
+
+    distribution_data[name] = [
+        int((pred == 0).sum()),
+        int((pred == 1).sum())
+    ]
+
+distribution_df = pd.DataFrame(
+    distribution_data,
+    index=["Delivered", "Returned"]
+)
+
+distribution_df.plot(
+    kind="bar",
+    figsize=(12, 6)
+)
+
+plt.title("Actual vs Predicted Order Distribution")
+plt.xlabel("Order Status")
+plt.ylabel("Number of Orders")
+plt.xticks(rotation=0)
+plt.legend(title="Actual / Model")
+plt.tight_layout()
+plt.show()
+
+
+# ==========================================================
+# 24. RETURNED-ORDER DETECTION PERFORMANCE
+# ==========================================================
+
+returned_metrics = []
+
+for name, pred in predictions.items():
+
+    returned_metrics.append({
+        "Model": name,
+        "Precision": precision_score(
+            y_test, pred, pos_label=1, zero_division=0
+        ) * 100,
+
+        "Recall": recall_score(
+            y_test, pred, pos_label=1, zero_division=0
+        ) * 100,
+
+        "F1 Score": f1_score(
+            y_test, pred, pos_label=1, zero_division=0
+        ) * 100
+    })
+
+returned_df = pd.DataFrame(returned_metrics)
+
+returned_df.set_index("Model").plot(
+    kind="bar",
+    figsize=(12, 6),
+    ylim=(0, 100)
+)
+
+plt.title("Returned-Order Detection Performance")
+plt.xlabel("Machine Learning Model")
+plt.ylabel("Score (%)")
+plt.xticks(rotation=25, ha="right")
+plt.legend(title="Metric")
+plt.tight_layout()
+plt.show()
+
+
+# ==========================================================
+# 25. FINAL MODEL SUMMARY
+# ==========================================================
+
+print("\n========== FINAL MODEL COMPARISON ==========")
+
+print(
+    results_df.sort_values(
+        "Accuracy (%)", ascending=False
+    ).round(2).to_string(index=False)
+)
+
+best_accuracy_name = results_df.loc[
+    results_df["Accuracy (%)"].idxmax(), "Model"
+]
+
+best_f1_name = results_df.loc[
+    results_df["F1 Score (%)"].idxmax(), "Model"
+]
+
+print("\nBest Model by Accuracy:", best_accuracy_name)
+print("Best Model by Returned-Class F1 Score:", best_f1_name)
+
+print("\nAll predictive analysis visualizations completed!")
+
