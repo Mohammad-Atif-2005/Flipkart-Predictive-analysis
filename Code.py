@@ -290,6 +290,14 @@ constant_columns = [
 
 X = X.drop(columns=constant_columns)
 
+# Remove features that showed no relationship with returns
+noise_columns = [
+    "Customer Gender", "Zone", "Product Category", "Order Quantity",
+    "OrderYear", "OrderMonth", "OrderDay", "OrderDayOfWeek"
+]
+
+X = X.drop(columns=[c for c in noise_columns if c in X.columns])
+
 print("\nFeatures used:")
 print(X.columns.tolist())
 
@@ -411,8 +419,10 @@ print("\n========== MODEL 4: RANDOM FOREST ==========")
 model4 = Pipeline([
     ("preprocessor", preprocessor),
     ("classifier", RandomForestClassifier(
-        n_estimators=100,
+        n_estimators=200,
         max_depth=15,
+        min_samples_leaf=5,
+        class_weight="balanced_subsample",
         random_state=42,
         n_jobs=-1
     ))
@@ -743,5 +753,291 @@ best_f1_name = results_df.loc[
 print("\nBest Model by Accuracy:", best_accuracy_name)
 print("Best Model by Returned-Class F1 Score:", best_f1_name)
 
-print("\nAll predictive analysis visualizations completed!")
+#print("\nAll predictive analysis visualizations completed!")
 
+
+# ==========================================================
+# 26. CALIBRATED SVM FOR RETURN PROBABILITY
+# ==========================================================
+
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import roc_curve, auc
+
+print("\n========== CALIBRATING SVM PROBABILITIES ==========")
+
+calibrated_svm = CalibratedClassifierCV(
+    estimator=model5,
+    method="sigmoid",
+    cv=3
+)
+
+calibrated_svm.fit(X_train, y_train)
+
+# All five models, with calibrated SVM for probabilities
+probability_models = {
+    "Logistic Regression": model1,
+    "KNN": model2,
+    "Decision Tree": model3,
+    "Random Forest": model4,
+    "SVM": calibrated_svm
+}
+
+# ==========================================================
+# 27. ACTUAL VS PREDICTED ORDER STATUS
+# ==========================================================
+
+print("\n========== ACTUAL VS PREDICTED STATUS ==========")
+
+comparison_df = pd.DataFrame({
+    "Actual Status": y_test.map({
+        0: "Delivered",
+        1: "Returned"
+    })
+})
+
+for name, model in probability_models.items():
+
+    predicted = model.predict(X_test)
+
+    comparison_df[name] = pd.Series(
+        predicted,
+        index=X_test.index
+    ).map({
+        0: "Delivered",
+        1: "Returned"
+    })
+
+print(comparison_df.head(20).to_string())
+
+# Plot actual and predicted status for the first 20 test orders
+plot_df = pd.DataFrame({
+    "Actual": y_test.map({0: 0, 1: 1})
+})
+
+for name, model in probability_models.items():
+    plot_df[name] = model.predict(X_test)
+
+plot_df = plot_df.head(20)
+
+plt.figure(figsize=(14, 6))
+
+plt.plot(
+    range(1, len(plot_df) + 1),
+    plot_df["Actual"],
+    marker="o",
+    linewidth=3,
+    label="Actual Status"
+)
+
+for name in probability_models:
+    plt.plot(
+        range(1, len(plot_df) + 1),
+        plot_df[name],
+        marker="x",
+        linestyle="--",
+        label=name
+    )
+
+plt.yticks([0, 1], ["Delivered", "Returned"])
+plt.xlabel("Test Order Number")
+plt.ylabel("Order Status")
+plt.title("Actual vs Predicted Status for 20 Test Orders")
+plt.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# ==========================================================
+# 28. ROC CURVES FOR ALL FIVE MODELS
+# ==========================================================
+
+plt.figure(figsize=(10, 7))
+
+for name, model in probability_models.items():
+
+    probabilities = model.predict_proba(X_test)[:, 1]
+
+    fpr, tpr, thresholds = roc_curve(
+        y_test,
+        probabilities,
+        pos_label=1
+    )
+
+    roc_auc = auc(fpr, tpr)
+
+    plt.plot(
+        fpr,
+        tpr,
+        linewidth=2,
+        label=f"{name} (AUC = {roc_auc:.3f})"
+    )
+
+plt.plot(
+    [0, 1],
+    [0, 1],
+    linestyle="--",
+    label="Random Classifier"
+)
+
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("ROC Curve Comparison of Five Models")
+plt.legend(loc="lower right")
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# ==========================================================
+# 29. RETURN PROBABILITY COMPARISON
+# ==========================================================
+
+probability_results = {}
+
+for name, model in probability_models.items():
+    probability_results[name] = (
+        model.predict_proba(X_test)[:, 1] * 100
+    )
+
+probability_df = pd.DataFrame(
+    probability_results,
+    index=X_test.index
+)
+
+# Select the best model by returned-class F1 score
+best_f1_name = results_df.loc[
+    results_df["F1 Score (%)"].idxmax(),
+    "Model"
+]
+
+print("\nBest model by returned-class F1 score:", best_f1_name)
+
+# Show the first 20 test orders
+sample_probabilities = probability_df.head(20)
+
+plt.figure(figsize=(13, 7))
+
+for name in probability_models:
+    plt.plot(
+        range(1, len(sample_probabilities) + 1),
+        sample_probabilities[name],
+        marker="o",
+        linewidth=1.5,
+        label=name
+    )
+
+plt.axhline(
+    50,
+    linestyle="--",
+    linewidth=1,
+    label="50% Reference"
+)
+
+plt.xlabel("Test Order Number")
+plt.ylabel("Estimated Return Probability (%)")
+plt.title("Return Probability Comparison for 20 Orders")
+plt.ylim(0, 100)
+plt.legend(bbox_to_anchor=(1.02, 1), loc="upper left")
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# ==========================================================
+# 30. INDIVIDUAL ORDER PREDICTIONS
+# ==========================================================
+
+individual_predictions = pd.DataFrame(index=X_test.index)
+
+# Include order ID if the original dataset contains it
+order_id_col = next(
+    (
+        col for col in model_df.columns
+        if col.strip().lower() == "orderid"
+    ),
+    None
+)
+
+if order_id_col is not None:
+    individual_predictions["Order ID"] = (
+        model_df.loc[X_test.index, order_id_col]
+    )
+else:
+    individual_predictions["Order Index"] = X_test.index
+
+individual_predictions["Actual Status"] = y_test.map({
+    0: "Delivered",
+    1: "Returned"
+})
+
+for name, model in probability_models.items():
+
+    predicted = model.predict(X_test)
+    return_probability = model.predict_proba(X_test)[:, 1] * 100
+
+    individual_predictions[name + " Prediction"] = pd.Series(
+        predicted,
+        index=X_test.index
+    ).map({
+        0: "Delivered",
+        1: "Returned"
+    })
+
+    individual_predictions[name + " Return Probability (%)"] = (
+        return_probability.round(2)
+    )
+
+print("\n========== INDIVIDUAL ORDER PREDICTIONS ==========")
+print(individual_predictions.head(20).to_string(index=False))
+
+# ==========================================================
+# 31. VISUALIZE INDIVIDUAL RETURN PREDICTIONS
+# ==========================================================
+
+best_model_probability = probability_df[best_f1_name].head(20)
+actual_sample = y_test.loc[best_model_probability.index]
+
+colors = [
+    "tab:red" if actual == 1 else "tab:blue"
+    for actual in actual_sample
+]
+
+plt.figure(figsize=(12, 6))
+
+bars = plt.bar(
+    range(1, len(best_model_probability) + 1),
+    best_model_probability,
+    color=colors
+)
+
+plt.axhline(
+    50,
+    linestyle="--",
+    label="50% Reference"
+)
+
+plt.xticks(range(1, len(best_model_probability) + 1))
+plt.xlabel("Test Order Number")
+plt.ylabel("Estimated Return Probability (%)")
+plt.title(
+    "Individual Return Predictions - " + best_f1_name
+)
+plt.ylim(0, 100)
+plt.legend(["50% Reference", "Actual Returned", "Actual Delivered"])
+plt.grid(axis="y", alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# ==========================================================
+# 32. EXPORT PREDICTIONS TO EXCEL
+# ==========================================================
+
+output_path = r"D:\243project\Flipkart_Return_Predictions.xlsx"
+
+individual_predictions.to_excel(
+    output_path,
+    index=False
+)
+
+print("\nPrediction file saved successfully:")
+print(output_path)
+
+print("\nAll additional predictive visualizations completed!")
